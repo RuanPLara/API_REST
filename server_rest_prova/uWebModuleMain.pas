@@ -41,6 +41,7 @@ type
       procedure PersistServer(Server: TServer);
       procedure PersistFiles(Arquivo: TArquivo);
       function GetServerId(Id: String): TServer;
+      function GetFileId(Server, Id: String): TArquivo;
 
       function DecodePathUrl(Path: String): TArray<String>;
       procedure FormatGuid(var Guid: String);
@@ -105,6 +106,32 @@ procedure TWMMain.FormatGuid(var Guid: String);
 begin
    if Guid[1] <> '{' then
       Guid := '{' + Guid + '}';
+end;
+
+function TWMMain.GetFileId(Server, Id: String): TArquivo;
+begin
+   Result := nil;
+   if CdArquivosSERVERID.AsString <> Server then
+   begin
+      CdArquivos.Filtered := False;
+      CdArquivos.Filter := 'SERVERID = ' + Server;
+      CdArquivos.Filtered := True;
+   end;
+
+   if not CdArquivos.IsEmpty then
+   begin
+      if CdArquivosID.AsString <> Id then
+         CdArquivos.Locate('ID', Id, []);
+      if CdArquivosID.AsString = Id then
+      begin
+         Result := TArquivo.Create;
+         Result.Id := CdArquivosID.AsString;
+         Result.Descricao := CdArquivosNAME.AsString;
+         Result.size := CdArquivosSIZE.AsInteger;
+         Result.serverId := CdArquivosSERVERID.AsString;
+      end;
+   end;
+
 end;
 
 function TWMMain.GetServerId(Id: String): TServer;
@@ -193,6 +220,14 @@ end;
 
 procedure TWMMain.Result400(Mensagem: String);
 begin
+   if Pos('access violation', lowercase(mensagem)) <> 0 then
+   begin
+      if Request.MethodType in [mtPut, mtPost] then
+         Mensagem := 'Ocorreu um erro ao acessar os dados enviados'
+      else
+         Mensagem := 'Ocorreu um problema ao processar as informações';
+   end;
+
    Response.StatusCode := 400;
    Response.ContentType := 'application/Json';
    Response.Content := TJson.ObjectToJsonString
@@ -202,6 +237,7 @@ end;
 procedure TWMMain.WebModuleCreate(Sender: TObject);
 begin
    CDServer.Close;
+   CdArquivos.Close;
 end;
 
 procedure TWMMain.WMMainIndexAction(Sender: TObject; Request: TWebRequest;
@@ -212,7 +248,7 @@ begin
       Response.StatusCode := 200;
       Response.ContentType := 'application/Json';
       Response.Content := TJson.ObjectToJsonString
-        (TMessageResult.Create('API REST', 'Bem vindo a API REST Seventh'));
+        (TMessageResult.Create('API REST', 'Bem vindo a API REST'));
    end
    else
    begin
@@ -228,13 +264,11 @@ var
    ListServer: TObjectList<TServer>;
 begin
    try
-      if (Pos('json', Request.ContentType) = 0) and
-        (Request.MethodType in [mtPost]) then
-      begin
-         raise Exception.Create('Tipo de dados não suportado');
-      end;
       if Request.MethodType = mtPost then
       begin
+         if (Pos('json', Request.ContentType) = 0) then
+            raise Exception.Create('Tipo de dados não suportado');
+
          JsonObject := TJSONObject.ParseJSONValue(Request.Content)
            as TJSONObject;
 
@@ -254,7 +288,8 @@ begin
          Response.Content := TJson.ObjectToJsonString(Server);
 
       end
-      else if Request.MethodType = mtGET then
+      else
+      if Request.MethodType = mtGET then
       begin
          OpenListServer;
 
