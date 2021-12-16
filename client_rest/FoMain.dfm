@@ -44,7 +44,6 @@ object Form1: TForm1
     Caption = 'Envia para api rest'
     TabOrder = 2
     OnClick = BtEnviaArquivoClick
-    ExplicitTop = 130
   end
   object GroupBox1: TGroupBox
     Left = 0
@@ -93,8 +92,8 @@ object Form1: TForm1
     Align = alTop
     Caption = 'Convert base64 to file'
     TabOrder = 4
+    Visible = False
     OnClick = Button1Click
-    ExplicitTop = 113
   end
   object OpenDialog1: TOpenDialog
     Left = 448
