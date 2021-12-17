@@ -4,7 +4,7 @@ interface
 
 uses
    System.SysUtils, System.Classes, Web.HTTPApp, Rest.Json, System.Json,
-   Data.DB, System.IOUtils, System.NetEncoding, System.StrUtils,
+   Data.DB, System.IOUtils, System.NetEncoding, System.StrUtils, System.Types,
    Datasnap.DBClient, System.Generics.Collections, UnControl;
 
 type
@@ -35,6 +35,8 @@ type
       procedure WMMainVideosOperationAction(Sender: TObject;
         Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
       procedure CdArquivosAfterPost(DataSet: TDataSet);
+      procedure WMMainRecuperaBinVideoAction(Sender: TObject;
+        Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
    private
       procedure OpenListServer;
       procedure OpenListFiles(Server: String);
@@ -42,9 +44,12 @@ type
       procedure PersistFiles(Arquivo: TArquivo);
       function GetServerId(Id: String): TServer;
       function GetFileId(Server, Id: String): TArquivo;
+      procedure SaveFileInServer(Arquivo: TArquivo);
+      procedure ConvertBinToFile(Arquivo: TArquivo);
 
       function DecodePathUrl(Path: String): TArray<String>;
       procedure FormatGuid(var Guid: String);
+      procedure DeletarDiretorio(const NomeDiretorio: string);
 
       procedure Result400(Mensagem: String);
       procedure Result404();
@@ -66,7 +71,7 @@ implementation
 
 procedure TWMMain.CdArquivosAfterPost(DataSet: TDataSet);
 begin
-   CDServer.SaveToFile(RepoServers + 'list_files.xml', dfXMLUTF8);
+   CdArquivos.SaveToFile(RepoServers + 'list_files.xml', dfXMLUTF8);
 end;
 
 procedure TWMMain.CDServerAfterPost(DataSet: TDataSet);
@@ -102,6 +107,30 @@ begin
    end;
 end;
 
+procedure TWMMain.DeletarDiretorio(const NomeDiretorio: string);
+var
+   arquivos: TStringDynArray;
+   Arquivo: string;
+begin
+   if TDirectory.Exists(NomeDiretorio) then
+   begin
+      // obtem todos os arquivos dentro do diretório.
+      arquivos := TDirectory.GetFiles(NomeDiretorio);
+
+      // deleta todos os arquivos.
+      for Arquivo in arquivos do
+      begin
+         TFile.Delete(Arquivo);
+      end;
+
+      // se não existir mais arquivos, remove o diretorio.
+      if TDirectory.IsEmpty(NomeDiretorio) then
+      begin
+         TDirectory.Delete(NomeDiretorio);
+      end;
+   end;
+end;
+
 procedure TWMMain.FormatGuid(var Guid: String);
 begin
    if Guid[1] <> '{' then
@@ -114,7 +143,7 @@ begin
    if CdArquivosSERVERID.AsString <> Server then
    begin
       CdArquivos.Filtered := False;
-      CdArquivos.Filter := 'SERVERID = ' + Server;
+      CdArquivos.Filter := 'SERVERID = ' + QuotedStr(Server);
       CdArquivos.Filtered := True;
    end;
 
@@ -157,9 +186,9 @@ begin
          CdArquivos.LoadFromFile(RepoServers + 'list_files.xml');
       CdArquivos.Open;
    end;
-   CdArquivos.Filtered := false;
-   CdArquivos.Filter := 'SERVERID = ' + Server;
-   CdArquivos.Filtered := true;
+   CdArquivos.Filtered := False;
+   CdArquivos.Filter := 'SERVERID = ' + QuotedStr(Server);
+   CdArquivos.Filtered := True;
 end;
 
 procedure TWMMain.OpenListServer;
@@ -180,7 +209,7 @@ begin
    else
       CdArquivos.edit;
 
-   CdArquivosID.AsString := Arquivo.id;
+   CdArquivosID.AsString := Arquivo.Id;
    CdArquivosNAME.AsString := Arquivo.Descricao;
    CdArquivosSIZE.AsInteger := Arquivo.size;
    CdArquivosSERVERID.AsString := Arquivo.serverId;
@@ -218,9 +247,43 @@ begin
      (TMessageResult.Create(Request.PathInfo, 'Not found'));
 end;
 
+procedure TWMMain.ConvertBinToFile(Arquivo: TArquivo);
+var
+   inStream: TFileStream;
+   outStream: TFileStream;
+   Buff: TBytes;
+begin
+   if FileExists(RepoServers + Arquivo.serverId + '\' + Arquivo.Id +
+     Arquivo.TipoArquivo) then
+      DeleteFile(RepoServers + Arquivo.serverId + '\' + Arquivo.Id +
+        Arquivo.TipoArquivo);
+
+   inStream := TFileStream.Create(RepoServers + Arquivo.serverId + '\' +
+     Arquivo.Id + '.bin', fmOpenRead);
+
+   outStream := TFileStream.Create(RepoServers + Arquivo.serverId + '\' +
+     Arquivo.Id + Arquivo.TipoArquivo, fmCreate);
+   try
+      TNetEncoding.base64.Decode(inStream, outStream);
+   finally
+      outStream.Free;
+      inStream.Free;
+   end;
+end;
+
+procedure TWMMain.SaveFileInServer(Arquivo: TArquivo);
+begin
+   if FileExists(RepoServers + Arquivo.serverId + '\' + Arquivo.Id + '.bin')
+   then
+      DeleteFile(RepoServers + Arquivo.serverId + '\' + Arquivo.Id + '.bin');
+
+   TFile.AppendAllText(RepoServers + Arquivo.serverId + '\' + Arquivo.Id +
+     '.bin', Arquivo.base64);
+end;
+
 procedure TWMMain.Result400(Mensagem: String);
 begin
-   if Pos('access violation', lowercase(mensagem)) <> 0 then
+   if Pos('access violation', lowercase(Mensagem)) <> 0 then
    begin
       if Request.MethodType in [mtPut, mtPost] then
          Mensagem := 'Ocorreu um erro ao acessar os dados enviados'
@@ -256,6 +319,65 @@ begin
    end;
 end;
 
+procedure TWMMain.WMMainRecuperaBinVideoAction(Sender: TObject;
+  Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+var
+   ArrayPath: TArray<String>;
+   Server, IdFile: String;
+
+   ArquivoObj: TArquivo;
+begin
+   try
+      ArrayPath := DecodePathUrl(Request.PathInfo);
+      Server := ArrayPath[2];
+      IdFile := ArrayPath[4];
+      FormatGuid(Server);
+      FormatGuid(IdFile);
+
+      OpenListServer;
+      OpenListFiles(Server);
+      if not Assigned(GetServerId(Server)) then
+      begin
+         raise Exception.Create('Server ' + Server + ' OFF LINE');
+      end;
+
+      ArquivoObj := GetFileId(Server, IdFile);
+      if not Assigned(ArquivoObj) then
+      begin
+         Result404;
+         exit;
+      end;
+
+      if Request.MethodType = mtGET then
+      begin
+         if not FileExists(RepoServers + ArquivoObj.serverId + '\' +
+           ArquivoObj.Id + '.bin') then
+         begin
+            Result404;
+            exit;
+         end
+         else if Pos('html', Request.Accept) <> 0 then
+         begin
+            Response.StatusCode := 201;
+         end
+         else
+         begin
+            Response.StatusCode := 201;
+            Response.Content :=
+              TFile.ReadAllText(RepoServers + ArquivoObj.serverId + '\' +
+              ArquivoObj.Id + '.bin');
+         end;
+      end
+      else
+         raise Exception.Create('Método não implementado');
+
+   except
+      on e: Exception do
+         Result400(e.Message);
+   end;
+
+end;
+
 procedure TWMMain.WMMainServerAction(Sender: TObject; Request: TWebRequest;
   Response: TWebResponse; var Handled: Boolean);
 var
@@ -288,8 +410,7 @@ begin
          Response.Content := TJson.ObjectToJsonString(Server);
 
       end
-      else
-      if Request.MethodType = mtGET then
+      else if Request.MethodType = mtGET then
       begin
          OpenListServer;
 
@@ -377,7 +498,12 @@ begin
       else if Request.MethodType = mtDelete then
       begin
          if DirectoryExists(RepoServers + CDServerID.AsString) then
-            RemoveDir(RepoServers + CDServerID.AsString);
+            DeletarDiretorio(RepoServers + CDServerID.AsString);
+
+         OpenListFiles(FindGuid);
+         CdArquivos.First;
+         while NOT CdArquivos.Eof do
+            CdArquivos.Delete;
 
          if CDServerID.AsString = FindGuid then
             CDServer.Delete;
@@ -408,17 +534,20 @@ var
    JsonObject: TJSONObject;
    ArquivoObj: TArquivo;
    // Arquivo : TFile;
-   inStream: TFileStream;
-   outStream: TFileStream;
    Server: String;
-   Buff: TBytes;
+   ListFiles: TObjectList<TArquivo>;
 begin
    try
       Server := DecodePathUrl(Request.PathInfo)[2];
+      FormatGuid(Server);
+      OpenListServer;
+      if not Assigned(GetServerId(Server)) then
+      begin
+         raise Exception.Create('Server ' + Server + ' OFF LINE');
+      end;
 
       if Request.MethodType = mtPost then
       begin
-
          JsonObject := TJSONObject.ParseJSONValue(Request.Content)
            as TJSONObject;
 
@@ -427,32 +556,15 @@ begin
 
          ArquivoObj := TArquivo.Create;
          ArquivoObj.Id := TGuid.NewGuid.ToString;
-         ArquivoObj.serverId := Server;
 
+         ArquivoObj.serverId := Server;
          ArquivoObj.Descricao := JsonObject.GetValue('descricao').Value;
          ArquivoObj.base64 := JsonObject.GetValue('base64').Value;
          ArquivoObj.size := StrToInt(JsonObject.GetValue('size').Value);
 
-         if FileExists(RepoServers + ArquivoObj.Id + '.bin') then
-            DeleteFile(RepoServers + ArquivoObj.Id + '.bin');
+         SaveFileInServer(ArquivoObj);
 
-         if FileExists(RepoServers + ArquivoObj.Id + ArquivoObj.TipoArquivo) then
-            DeleteFile(RepoServers + ArquivoObj.Id+ ArquivoObj.TipoArquivo);
-
-         Tfile.AppendAllText(RepoServers + ArquivoObj.Id + '.bin', ArquivoObj.base64);
-
-         inStream := TFileStream.Create(RepoServers + ArquivoObj.Id + '.bin', fmOpenRead);
-
-         outStream := TFileStream.Create(RepoServers + ArquivoObj.Id+ ArquivoObj.TipoArquivo,
-           fmCreate);
-         try
-            TNetEncoding.base64.Decode(inStream, outStream);
-         finally
-            outStream.Free;
-         end;
-
-         if FileExists(RepoServers + ArquivoObj.Id + '.bin') then
-            DeleteFile(RepoServers + ArquivoObj.Id + '.bin');
+         PersistFiles(ArquivoObj);
 
          // devolve o objeto sem trafegar todo o arquivo novamente
          ArquivoObj.base64 := '[ACCEPT]';
@@ -460,6 +572,26 @@ begin
          Response.ContentType := 'application/Json';
          Response.Content := TJson.ObjectToJsonString(ArquivoObj);
 
+      end
+      else
+      begin
+         OpenListFiles(Server);
+         ListFiles := TObjectList<TArquivo>.Create;
+         try
+            CdArquivos.First;
+            while not CdArquivos.eof do
+            begin
+               ArquivoObj := GetFileId(Server, CdArquivosID.AsString);
+               ListFiles.Add(ArquivoObj);
+               CdArquivos.Next;
+            end;
+
+            Response.StatusCode := 201;
+            Response.ContentType := 'application/Json';
+            Response.Content := TJson.ObjectToJsonString(ListFiles);
+         finally
+            ListFiles.Destroy;
+         end;
       end;
    except
       on e: Exception do
@@ -475,8 +607,6 @@ var
 begin
    try
       FindGuid := DecodePathUrl(Request.PathInfo)[3];
-      // Copy(Request.PathInfo,
-      // LastDelimiter('/', Request.PathInfo) + 1);
 
       FormatGuid(FindGuid);
 
@@ -513,9 +643,59 @@ end;
 
 procedure TWMMain.WMMainVideosOperationAction(Sender: TObject;
   Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+var
+   ArrayPath: TArray<String>;
+   Server, IdFile: String;
+
+   ArquivoObj: TArquivo;
 begin
-   Response.StatusCode := 201;
-   Response.Content := Request.Content;
+   try
+      ArrayPath := DecodePathUrl(Request.PathInfo);
+      Server := ArrayPath[2];
+      IdFile := ArrayPath[4];
+      FormatGuid(Server);
+      FormatGuid(IdFile);
+
+      OpenListServer;
+      OpenListFiles(Server);
+      if not Assigned(GetServerId(Server)) then
+      begin
+         raise Exception.Create('Server ' + Server + ' OFF LINE');
+      end;
+
+      ArquivoObj := GetFileId(Server, IdFile);
+      if not Assigned(ArquivoObj) then
+      begin
+         Result404;
+         exit;
+      end;
+
+      if Request.MethodType = mtGET then
+      begin
+         Response.StatusCode := 201;
+         Response.Content := TJson.ObjectToJsonString(ArquivoObj);
+      end
+      else if Request.MethodType = mtDelete then
+      begin
+         if (CdArquivosSERVERID.AsString = Server) and
+           (CdArquivosID.AsString = IdFile) then
+            CdArquivos.Delete;
+
+         if FileExists(RepoServers + ArquivoObj.serverId + '\' + ArquivoObj.Id +
+           '.bin') then
+            DeleteFile(RepoServers + ArquivoObj.serverId + '\' + ArquivoObj.Id
+              + '.bin');
+
+         Response.StatusCode := 202;
+         Response.Content := TJson.ObjectToJsonString(ArquivoObj);
+      end
+      else
+         raise Exception.Create('Método não implementado');
+
+   except
+      on e: Exception do
+         Result400(e.Message);
+   end;
 end;
 
 end.
