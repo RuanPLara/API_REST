@@ -3,7 +3,8 @@ unit uWebModuleMain;
 interface
 
 uses
-   System.SysUtils, System.Classes, Web.HTTPApp, Rest.Json, System.Json,
+   Winapi.Windows, System.SysUtils, System.Classes, Web.HTTPApp, Rest.Json,
+   System.Json,
    Data.DB, System.IOUtils, System.NetEncoding, System.StrUtils, System.Types,
    Datasnap.DBClient, System.Generics.Collections, UnControl, System.Threading;
 
@@ -39,7 +40,8 @@ type
         Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
       procedure WMMainApagaVideosAction(Sender: TObject; Request: TWebRequest;
         Response: TWebResponse; var Handled: Boolean);
-    procedure WMMainStatusReciclagemAction(Sender: TObject; Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+      procedure WMMainStatusReciclagemAction(Sender: TObject;
+        Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
    private
       procedure OpenListServer;
       procedure OpenListFiles(Server: String);
@@ -48,6 +50,7 @@ type
       function GetServerId(Id: String): TServer;
       function GetFileId(Server, Id: String): TArquivo;
       procedure SaveFileInServer(Arquivo: TArquivo);
+
       procedure ConvertBinToFile(Arquivo: TArquivo);
 
       function DecodePathUrl(Path: String): TArray<String>;
@@ -56,7 +59,7 @@ type
 
       procedure Result400(Mensagem: String);
       procedure Result404();
-      function TaskStatusToStr(Status : TTaskStatus) : String;
+      function TaskStatusToStr(Status: TTaskStatus): String;
       { Private declarations }
    public
       { Public declarations }
@@ -256,7 +259,7 @@ procedure TWMMain.ConvertBinToFile(Arquivo: TArquivo);
 var
    inStream: TFileStream;
    outStream: TFileStream;
-   Buff: TBytes;
+   // Buff: TBytes;
 begin
    if FileExists(RepoServers + Arquivo.serverId + '\' + Arquivo.Id +
      Arquivo.TipoArquivo) then
@@ -289,13 +292,20 @@ end;
 function TWMMain.TaskStatusToStr(Status: TTaskStatus): String;
 begin
    case Ord(Status) of
-      0 : Result := 'Created';
-      1 : Result :='WaitingToRun';
-      2 : Result :='Running';
-      3 : Result :='Completed';
-      4 : Result :='WaitingForChildren';
-      5 : Result :='Canceled';
-      6 : Result :='Exception';
+      0:
+         Result := 'Created';
+      1:
+         Result := 'WaitingToRun';
+      2:
+         Result := 'Running';
+      3:
+         Result := 'Completed';
+      4:
+         Result := 'WaitingForChildren';
+      5:
+         Result := 'Canceled';
+      6:
+         Result := 'Exception';
    end;
 end;
 
@@ -376,12 +386,16 @@ begin
       if Assigned(recycler) then
       begin
          Response.StatusCode := 201;
-         Response.Content := TJson.ObjectToJsonString(TMessageResult.Create('Reciclagem iniciada', TaskStatusToStr(recycler.Status)));
+         Response.Content := TJson.ObjectToJsonString
+           (TMessageResult.Create('Reciclagem iniciada',
+           TaskStatusToStr(recycler.Status)));
       end
       else
       begin
          Response.StatusCode := 500;
-         Response.Content := TJson.ObjectToJsonString(TMessageResult.Create('Reciclagem', 'Não foi possível iniciar a rotina de reciclagem'));
+         Response.Content := TJson.ObjectToJsonString
+           (TMessageResult.Create('Reciclagem',
+           'Não foi possível iniciar a rotina de reciclagem'));
       end;
    except
       on e: Exception do
@@ -445,6 +459,11 @@ begin
          else if Pos('html', Request.Accept) <> 0 then
          begin
             Response.StatusCode := 201;
+            Response.Content := '<html>' + '<body>' + '<video controls>' +
+              '   <source type="video/mp4" src="data:video/mp4;base64,' +
+              TFile.ReadAllText(RepoServers + ArquivoObj.serverId + '\' +
+              ArquivoObj.Id + '.bin') + '">' + '</video>' + '</body>' +
+              '</html>';
          end
          else
          begin
@@ -685,7 +704,8 @@ begin
    end;
 end;
 
-procedure TWMMain.WMMainStatusReciclagemAction(Sender: TObject; Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+procedure TWMMain.WMMainStatusReciclagemAction(Sender: TObject;
+Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
 begin
    try
       Response.StatusCode := 201;
@@ -694,9 +714,26 @@ begin
          Response.Content := '{"status": "stop"}';
       end
       else
-         Response.Content := '{"status": "'+TaskStatusToStr(recycler.Status)+'"}';
+      begin
+         if recycler.Status = TTaskStatus.Completed then
+         begin
+            if recycler.Value = 201 then
+               Response.Content := '{"status": "' +
+                 TaskStatusToStr(recycler.Status) + '"}'
+            else
+            begin
+               Response.StatusCode := recycler.Value;
+               Response.Content := '{"status": "' +
+                 TaskStatusToStr(recycler.Status) + ' Code: ' +
+                 IntToStr(recycler.Value) + '"}';
+            end;
+         end;
+
+         Response.Content := '{"status": "' +
+           TaskStatusToStr(recycler.Status) + '"}';
+      end;
    except
-      on e:exception do
+      on e: Exception do
          Result400(e.Message);
    end;
 end;

@@ -38,6 +38,10 @@ exemplo de request: http://localhost:8080/api/server/04FEFFB2-BEBA-4D73-BBE6-A68
 exemplo de request: http://localhost:8080/api/server/04FEFFB2-BEBA-4D73-BBE6-A68E02F63BB8/videos/B8B8EFCB-5870-4F9F-B90C-D6A30163D2DE
 
 [GET] /api/server/[ID_SERVER]/videos/ID_VIDEO/bin - recupeda dados binarios do arquivo
+permite dois tipos de visualização passando
+Accept "text/html" retorna um reprodutor de video
+sem o accept "text/html" retorna o binario do video
+
 exemplo de request: http://localhost:8080/api/server/0B824499-E3A4-4C2B-9B8E-B53E3AD3E36A/videos/A60460BE-B489-48D0-A5C6-5EAE78E3D0A2/bin
 
 [GET] /api/server/[ID_SERVER]/videos - insere todos os videos de um server
