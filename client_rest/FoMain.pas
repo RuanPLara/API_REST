@@ -117,6 +117,8 @@ begin
    Envio.WriteString(TJson.ObjectToJsonString(Arquivo));
    Envio.Position := 0;
 
+   Envio.SaveToFile('.\request.json');
+
    try
       MmBase64.Text := IdHTTP.Post(EdApi.Text + '/api/server/' + EdServer.Text +
         '/videos', Envio);
@@ -139,9 +141,6 @@ begin
       DeleteFile('.\arquivo.mp4');
 
    MmBase64.Lines.SaveToFile('.\arquivo.bin');
-//   inStream := TStringStream.Create();
-//   inStream.LoadTo
-//   inStream.SaveToFile();
    InStream := TFileStream.Create('.\arquivo.bin', fmOpenRead);
 
    outStream := TFileStream.Create('.\arquivo.mp4', fmCreate);
