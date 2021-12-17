@@ -39,6 +39,18 @@ object WMMain: TWMMain
       Name = 'Server'
       PathInfo = '/api/server'
       OnAction = WMMainServerAction
+    end
+    item
+      MethodType = mtPost
+      Name = 'ApagaVideos'
+      PathInfo = '/api/recycler/process/*'
+      OnAction = WMMainApagaVideosAction
+    end
+    item
+      MethodType = mtGet
+      Name = 'StatusReciclagem'
+      PathInfo = '/api/recycler/status'
+      OnAction = WMMainStatusReciclagemAction
     end>
   Height = 403
   Width = 592

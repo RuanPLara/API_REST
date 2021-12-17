@@ -5,7 +5,7 @@ interface
 uses
    System.SysUtils, System.Classes, Web.HTTPApp, Rest.Json, System.Json,
    Data.DB, System.IOUtils, System.NetEncoding, System.StrUtils, System.Types,
-   Datasnap.DBClient, System.Generics.Collections, UnControl;
+   Datasnap.DBClient, System.Generics.Collections, UnControl, System.Threading;
 
 type
    TWMMain = class(TWebModule)
@@ -37,6 +37,9 @@ type
       procedure CdArquivosAfterPost(DataSet: TDataSet);
       procedure WMMainRecuperaBinVideoAction(Sender: TObject;
         Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+      procedure WMMainApagaVideosAction(Sender: TObject; Request: TWebRequest;
+        Response: TWebResponse; var Handled: Boolean);
+    procedure WMMainStatusReciclagemAction(Sender: TObject; Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
    private
       procedure OpenListServer;
       procedure OpenListFiles(Server: String);
@@ -53,6 +56,7 @@ type
 
       procedure Result400(Mensagem: String);
       procedure Result404();
+      function TaskStatusToStr(Status : TTaskStatus) : String;
       { Private declarations }
    public
       { Public declarations }
@@ -60,6 +64,7 @@ type
 
 var
    WebModuleClass: TComponentClass = TWMMain;
+   recycler: IFuture<integer>;
 
 const
    RepoServers: String = '.\servers\';
@@ -281,6 +286,19 @@ begin
      '.bin', Arquivo.base64);
 end;
 
+function TWMMain.TaskStatusToStr(Status: TTaskStatus): String;
+begin
+   case Ord(Status) of
+      0 : Result := 'Created';
+      1 : Result :='WaitingToRun';
+      2 : Result :='Running';
+      3 : Result :='Completed';
+      4 : Result :='WaitingForChildren';
+      5 : Result :='Canceled';
+      6 : Result :='Exception';
+   end;
+end;
+
 procedure TWMMain.Result400(Mensagem: String);
 begin
    if Pos('access violation', lowercase(Mensagem)) <> 0 then
@@ -303,8 +321,76 @@ begin
    CdArquivos.Close;
 end;
 
-procedure TWMMain.WMMainIndexAction(Sender: TObject; Request: TWebRequest;
+procedure TWMMain.WMMainApagaVideosAction(Sender: TObject; Request: TWebRequest;
   Response: TWebResponse; var Handled: Boolean);
+var
+   dias: integer;
+begin
+
+   try
+      dias := StrToIntDef(DecodePathUrl(Request.PathInfo)[3], 0);
+      if dias <= 0 then
+         raise Exception.Create('Parametro inválido');
+
+      recycler := TTask.Future<integer>(
+         function: integer
+         var
+            RepoArquivos: TClientDataSet;
+            FHandle: integer;
+            Arquivo: String;
+            DataArquivo: TDateTime;
+         begin
+            try
+               RepoArquivos := TClientDataSet.Create(Self);
+               RepoArquivos.LoadFromFile(RepoServers + 'list_files.xml');
+               RepoArquivos.Open;
+
+               RepoArquivos.First;
+               while not RepoArquivos.Eof do
+               begin
+                  Arquivo := RepoServers + RepoArquivos.FieldByName('SERVERID')
+                    .AsString + '\' + RepoArquivos.FieldByName('ID')
+                    .AsString + '.bin';
+                  if FileExists(Arquivo) then
+                  begin
+                     FHandle := FileOpen(Arquivo, 0);
+                     try
+                        DataArquivo := FileDateToDateTime(FileGetDate(FHandle));
+                     finally
+                        FileClose(FHandle);
+                     end;
+                     if DataArquivo < (Date - dias) then
+                     begin
+                        DeleteFile(Arquivo);
+                     end;
+                  end;
+
+                  RepoArquivos.Next;
+               end;
+               Result := 201;
+            except
+               Result := 500;
+            end;
+         end);
+
+      if Assigned(recycler) then
+      begin
+         Response.StatusCode := 201;
+         Response.Content := TJson.ObjectToJsonString(TMessageResult.Create('Reciclagem iniciada', TaskStatusToStr(recycler.Status)));
+      end
+      else
+      begin
+         Response.StatusCode := 500;
+         Response.Content := TJson.ObjectToJsonString(TMessageResult.Create('Reciclagem', 'Não foi possível iniciar a rotina de reciclagem'));
+      end;
+   except
+      on e: Exception do
+         Result400(e.Message)
+   end;
+end;
+
+procedure TWMMain.WMMainIndexAction(Sender: TObject; Request: TWebRequest;
+Response: TWebResponse; var Handled: Boolean);
 begin
    if (Request.PathInfo = '/') and (Request.MethodType = mtGET) then
    begin
@@ -320,7 +406,7 @@ begin
 end;
 
 procedure TWMMain.WMMainRecuperaBinVideoAction(Sender: TObject;
-  Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
 var
    ArrayPath: TArray<String>;
    Server, IdFile: String;
@@ -379,7 +465,7 @@ begin
 end;
 
 procedure TWMMain.WMMainServerAction(Sender: TObject; Request: TWebRequest;
-  Response: TWebResponse; var Handled: Boolean);
+Response: TWebResponse; var Handled: Boolean);
 var
    Server: TServer;
    JsonObject: TJSONObject;
@@ -417,7 +503,7 @@ begin
          ListServer := TObjectList<TServer>.Create;
          try
             CDServer.First;
-            while not CDServer.eof do
+            while not CDServer.Eof do
             begin
                Server := GetServerId(CDServerID.AsString);
                ListServer.Add(Server);
@@ -442,7 +528,7 @@ begin
 end;
 
 procedure TWMMain.WMMainServersAction(Sender: TObject; Request: TWebRequest;
-  Response: TWebResponse; var Handled: Boolean);
+Response: TWebResponse; var Handled: Boolean);
 var
    FindGuid: String;
    Server: TServer;
@@ -529,7 +615,7 @@ begin
 end;
 
 procedure TWMMain.WMMainServerVideosAction(Sender: TObject;
-  Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
 var
    JsonObject: TJSONObject;
    ArquivoObj: TArquivo;
@@ -579,7 +665,7 @@ begin
          ListFiles := TObjectList<TArquivo>.Create;
          try
             CdArquivos.First;
-            while not CdArquivos.eof do
+            while not CdArquivos.Eof do
             begin
                ArquivoObj := GetFileId(Server, CdArquivosID.AsString);
                ListFiles.Add(ArquivoObj);
@@ -599,8 +685,24 @@ begin
    end;
 end;
 
+procedure TWMMain.WMMainStatusReciclagemAction(Sender: TObject; Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+begin
+   try
+      Response.StatusCode := 201;
+      if not Assigned(recycler) then
+      begin
+         Response.Content := '{"status": "stop"}';
+      end
+      else
+         Response.Content := '{"status": "'+TaskStatusToStr(recycler.Status)+'"}';
+   except
+      on e:exception do
+         Result400(e.Message);
+   end;
+end;
+
 procedure TWMMain.WMMainStatusServerAction(Sender: TObject;
-  Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
 var
    FindGuid: String;
    Server: TServer;
@@ -642,7 +744,7 @@ begin
 end;
 
 procedure TWMMain.WMMainVideosOperationAction(Sender: TObject;
-  Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
+Request: TWebRequest; Response: TWebResponse; var Handled: Boolean);
 var
    ArrayPath: TArray<String>;
    Server, IdFile: String;
