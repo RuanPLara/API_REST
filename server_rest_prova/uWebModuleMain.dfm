@@ -9,6 +9,12 @@ object WMMain: TWMMain
       OnAction = WMMainIndexAction
     end
     item
+      MethodType = mtGet
+      Name = 'RecuperaBinVideo'
+      PathInfo = '/api/server/*/videos/*/bin'
+      OnAction = WMMainRecuperaBinVideoAction
+    end
+    item
       Name = 'VideosOperation'
       PathInfo = '/api/server/*/videos/*'
       OnAction = WMMainVideosOperationAction
@@ -21,7 +27,7 @@ object WMMain: TWMMain
     item
       MethodType = mtGet
       Name = 'StatusServer'
-      PathInfo = '/api/servers/available/*'
+      PathInfo = '/api/server/available/*'
       OnAction = WMMainStatusServerAction
     end
     item
